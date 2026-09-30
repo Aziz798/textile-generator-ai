@@ -14,11 +14,13 @@ import (
 	"unicode"
 
 	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/azure"
 )
 
 type Generator struct {
-	client *openai.Client
+	client          *openai.Client
+	chatDeployment  string
+	imageDeployment string
 }
 
 type imageReader struct {
@@ -45,7 +47,7 @@ func (g *Generator) ProductName(ctx context.Context, fabricPath string) (string,
 	}
 
 	result, err := g.client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-		Model: "gpt-4o-mini",
+		Model: g.chatDeployment,
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.UserMessage([]openai.ChatCompletionContentPartUnionParam{
 				openai.TextContentPart("Read the product or fabric name printed inside this image. Return only that name, with no explanation. If no name is visible, return UNKNOWN."),
@@ -85,13 +87,16 @@ func sanitizeFilename(name string) string {
 	return strings.Trim(builder.String(), "-")
 }
 
-func New(apiKey string) *Generator {
+func New(endpoint, apiKey, apiVersion, chatDeployment, imageDeployment string) *Generator {
 	client := openai.NewClient(
-		option.WithAPIKey(apiKey),
+		azure.WithEndpoint(endpoint, apiVersion),
+		azure.WithAPIKey(apiKey),
 	)
 
 	return &Generator{
-		client: &client,
+		client:          &client,
+		chatDeployment:  chatDeployment,
+		imageDeployment: imageDeployment,
 	}
 }
 
@@ -153,7 +158,7 @@ IMPORTANT:
 `
 
 	result, err := g.client.Images.Edit(ctx, openai.ImageEditParams{
-		Model: openai.ImageModelGPTImage1_5,
+		Model: g.imageDeployment,
 		Image: openai.ImageEditParamsImageUnion{
 			OfFileArray: []io.Reader{
 				imageReader{Reader: fabric, filename: filepath.Base(fabricPath), mediaType: fabricType},

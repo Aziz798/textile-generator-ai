@@ -17,15 +17,20 @@ func main() {
 		log.Println("warning: .env not found")
 	}
 
-	settings := config.Load(os.Getenv("OPENAI_API_KEY"))
-
 	log.Println("Textile AI generator starting...")
+	settings := config.Load(
+		os.Getenv("AZURE_OPENAI_API_KEY"),
+		os.Getenv("AZURE_OPENAI_ENDPOINT"),
+		os.Getenv("AZURE_OPENAI_API_VERSION"),
+		os.Getenv("AZURE_OPENAI_CHAT_DEPLOYMENT"),
+		os.Getenv("AZURE_OPENAI_IMAGE_DEPLOYMENT"),
+	)
 
-	if settings.APIKey == "" {
-		log.Fatal("OPENAI_API_KEY is not set")
+	if settings.APIKey == "" || settings.Endpoint == "" || settings.APIVersion == "" || settings.ChatDeployment == "" || settings.ImageDeployment == "" {
+		log.Fatal("AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_VERSION, AZURE_OPENAI_CHAT_DEPLOYMENT, and AZURE_OPENAI_IMAGE_DEPLOYMENT must be set")
 	}
 
-	generator := imagegen.New(settings.APIKey)
+	generator := imagegen.New(settings.Endpoint, settings.APIKey, settings.APIVersion, settings.ChatDeployment, settings.ImageDeployment)
 	if err := worker.New(generator, settings).Run(context.Background()); err != nil {
 		log.Fatal(err)
 	}
