@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"textile-generator-ai/internal/catalog"
 	"textile-generator-ai/internal/config"
@@ -13,8 +14,10 @@ import (
 
 type ImageGenerator interface {
 	ProductName(context.Context, string) (string, error)
-	Generate(context.Context, string, string, string) error
+	Generate(context.Context, string, string, string, string) error
 }
+
+var rooms = []string{"living room", "bedroom", "dining room", "kitchen", "home office", "hotel room"}
 
 type Worker struct {
 	generator ImageGenerator
@@ -34,34 +37,67 @@ func (w *Worker) Run(ctx context.Context) error {
 		return err
 	}
 
-	log.Printf("found %d file(s) in input directory", len(images))
-	registry := catalog.NewNameRegistry()
-	processed := 0
-	outputs := 0
-	for _, fabricPath := range images {
-		if !catalog.IsImageFile(fabricPath) {
-			log.Printf("ignoring non-image file: %s", fabricPath)
-			continue
+	var imagePaths []string
+	for _, imagePath := range images {
+		if catalog.IsImageFile(imagePath) {
+			imagePaths = append(imagePaths, imagePath)
+		} else {
+			log.Printf("ignoring non-image file: %s", imagePath)
 		}
-		processed++
-		log.Printf("processing image %d: %s", processed, fabricPath)
-
-		name, err := w.generator.ProductName(ctx, fabricPath)
-		if err != nil {
-			log.Printf("skip %s: %v", fabricPath, err)
-			continue
-		}
-
-		outputPath := filepath.Join(w.settings.OutputDir, registry.OutputName(name)+".jpg")
-		if err := w.generator.Generate(ctx, fabricPath, w.settings.ReferencePath, outputPath); err != nil {
-			log.Printf("skip %s: %v", fabricPath, err)
-			continue
-		}
-
-		outputs++
-		log.Printf("generated %s", outputPath)
 	}
-	log.Printf("batch complete: processed=%d outputs=%d", processed, outputs)
+
+	log.Printf("found %d image file(s) in input directory", len(imagePaths))
+	registry := catalog.NewNameRegistry()
+	concurrency := w.settings.GenerationConcurrency
+	if concurrency > len(imagePaths) {
+		concurrency = len(imagePaths)
+	}
+	if concurrency == 0 {
+		log.Printf("batch complete: processed=0 outputs=0")
+		return nil
+	}
+
+	jobs := make(chan int)
+	var waitGroup sync.WaitGroup
+	var registryMu sync.Mutex
+	var outputsMu sync.Mutex
+	outputs := 0
+	for workerIndex := 0; workerIndex < concurrency; workerIndex++ {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			for imageIndex := range jobs {
+				fabricPath := imagePaths[imageIndex]
+				log.Printf("processing image %d: %s", imageIndex+1, fabricPath)
+
+				name, err := w.generator.ProductName(ctx, fabricPath)
+				if err != nil {
+					log.Printf("skip %s: %v", fabricPath, err)
+					continue
+				}
+
+				registryMu.Lock()
+				outputPath := filepath.Join(w.settings.OutputDir, registry.OutputName(name)+".jpg")
+				registryMu.Unlock()
+				if err := w.generator.Generate(ctx, fabricPath, w.settings.ReferencePath, outputPath, rooms[imageIndex%len(rooms)]); err != nil {
+					log.Printf("skip %s: %v", fabricPath, err)
+					continue
+				}
+
+				outputsMu.Lock()
+				outputs++
+				outputsMu.Unlock()
+				log.Printf("generated %s", outputPath)
+			}
+		}()
+	}
+	for imageIndex := range imagePaths {
+		jobs <- imageIndex
+	}
+	close(jobs)
+	waitGroup.Wait()
+
+	log.Printf("batch complete: processed=%d outputs=%d", len(imagePaths), outputs)
 	return nil
 }
 

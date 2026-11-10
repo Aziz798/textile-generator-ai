@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"mime"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,8 +87,14 @@ func sanitizeFilename(name string) string {
 }
 
 func New(apiKey string) *Generator {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = 16
+	transport.MaxIdleConnsPerHost = 8
+	transport.IdleConnTimeout = 90 * time.Second
+
 	client := openai.NewClient(
 		option.WithAPIKey(apiKey),
+		option.WithHTTPClient(&http.Client{Transport: transport}),
 	)
 
 	return &Generator{
@@ -100,6 +107,7 @@ func (g *Generator) Generate(
 	fabricPath string,
 	stylePath string,
 	outputPath string,
+	room string,
 ) error {
 	started := time.Now()
 	log.Printf("starting image generation: fabric=%s style=%s output=%s", fabricPath, stylePath, outputPath)
@@ -133,8 +141,8 @@ IMPORTANT:
 - Preserve the actual textile's color, weave, pattern and visual character.
 - Do not invent a different textile.
 	- Create a photorealistic interior showing this textile used as curtains.
-	- Choose the room and background that best suit the textile's color, pattern, texture and mood.
-	- Do not always use a living room. Select an appropriate room such as a living room, bedroom, dining room, kitchen, home office or hotel room when it better fits the textile.
+	- Use a realistic %s for this image. Do not substitute another room.
+	- The room choice is intentional; vary architecture, furniture and decor while keeping the supplied textile unchanged.
 	- Use the textile's visual character to guide the interior: lighter or delicate fabrics may suit a bright bedroom or refined living space, while practical, warm or highly textured fabrics may suit a dining room, kitchen or contemporary space.
 	- Vary the room architecture, furniture, lighting and decor between images when the textiles are different. Do not reuse the same background by default.
 	- Keep the chosen room realistic and premium, with a coherent color palette that complements rather than changes the supplied textile.
@@ -150,7 +158,10 @@ IMPORTANT:
 - Do not invent product information.
 - Do not add fake logos or brands.
 - Keep the visual identity consistent with the reference catalog.
-`
+-keep the supplied textile as the main focus of the image, with the room and furniture as supporting elements.
+-keep the naming correct and recheck the spelling of the textile name.
+	`
+	prompt = fmt.Sprintf(prompt, room)
 
 	result, err := g.client.Images.Edit(ctx, openai.ImageEditParams{
 		Model: openai.ImageModelGPTImage1_5,
